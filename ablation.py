@@ -329,7 +329,6 @@ def run_single(
     # các biến này được truyền vào run_single qua kwargs
     if _val_texts is not None and _df_dev_raw is not None and _df_test_raw is not None:
         # Evaluate lại để lấy probs của val (đã evaluate trong training loop nhưng không lưu)
-        from src.model import DANN_TextDetector
         _model_ea = DANN_TextDetector(
             CFG.MODEL_NAME, CFG.NUM_CLASSES, CFG.NUM_DOMAINS,
             dropout=run_cfg.dropout, use_lora=True, use_dann=run_cfg.use_dann,
