@@ -37,6 +37,7 @@ from src.train import (
     generate_submission,
 )
 from src.plots import plot_learning_curves, plot_ablation_summary, plot_roc_curves
+from src.error_analysis import run_error_analysis
 
 # ── Tạo output dirs nếu chưa có ──────────────────────────────────────────────
 os.makedirs(CFG.PLOT_DIR, exist_ok=True)
@@ -123,8 +124,11 @@ def run_single(
     run_cfg: AblationConfig,
     train_ds, val_ds, target_ds, dev_ds, test_ds, submit_ds,
     tokenizer,
-    is_threshold_only: bool = False,
-    pretrained_state: dict  = None,
+    is_threshold_only: bool  = False,
+    pretrained_state: dict   = None,
+    _val_texts: list         = None,
+    _df_dev_raw              = None,
+    _df_test_raw             = None,
 ) -> dict:
     seed_everything()
     run_id = run_cfg.run_id
@@ -148,22 +152,6 @@ def run_single(
         use_lora    = True,
         use_dann    = run_cfg.use_dann,
     ).to(device)
-
-    # ── In thống kê tham số ─────────────────────────────────────
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(
-        p.numel() for p in model.parameters()
-        if p.requires_grad
-    )
-    
-    print("\n" + "=" * 70)
-    print("MODEL PARAMETERS")
-    print("=" * 70)
-    print(f"Total params      : {total_params:,}")
-    print(f"Trainable params  : {trainable_params:,}")
-    print(f"Frozen params     : {total_params - trainable_params:,}")
-    print(f"Trainable ratio   : {100 * trainable_params / total_params:.4f}%")
-    print("=" * 70)
 
     # ── Nếu chỉ cần threshold calibration, load weights và skip training ──────
     if is_threshold_only and pretrained_state is not None:
@@ -209,12 +197,6 @@ def run_single(
             },
             reinit=True,
         )
-        
-        wandb.config.update({
-            "total_params": total_params,
-            "trainable_params": trainable_params,
-            "trainable_ratio": 100 * trainable_params / total_params,
-        })
 
         best_f1, best_state, no_improve, global_step = 0.0, None, 0, 0
         history = {}
@@ -341,6 +323,39 @@ def run_single(
         f"test_F1={test_f1:.4f} | AUC={auc:.4f} | FPR@95%={fpr_at_95:.4f}"
     )
 
+    # ── Error Analysis ───────────────────────────────────────────────────────
+    # val_texts, df_val_raw, df_dev_raw, df_test_raw được định nghĩa trong run_all()
+    # và truyền vào qua closure — ta dùng nonlocal pattern đơn giản hơn:
+    # các biến này được truyền vào run_single qua kwargs
+    if _val_texts is not None and _df_dev_raw is not None and _df_test_raw is not None:
+        # Evaluate lại để lấy probs của val (đã evaluate trong training loop nhưng không lưu)
+        from src.model import DANN_TextDetector
+        _model_ea = DANN_TextDetector(
+            CFG.MODEL_NAME, CFG.NUM_CLASSES, CFG.NUM_DOMAINS,
+            dropout=run_cfg.dropout, use_lora=True, use_dann=run_cfg.use_dann,
+        ).to(device)
+        _ckpt = ckpt_path(run_id, "final")
+        if os.path.exists(_ckpt):
+            load_checkpoint(_ckpt, _model_ea)
+            _, _, _, val_probs_ea,  val_labels_ea  = evaluate(_model_ea, val_loader,  device)
+            _, _, _, dev_probs_ea,  dev_labels_ea  = evaluate(_model_ea, dev_loader,  device)
+            _, _, _, test_probs_ea, test_labels_ea = evaluate(_model_ea, test_loader, device)
+
+            run_error_analysis(
+                run_id      = run_id,
+                val_texts   = _val_texts,
+                val_labels  = val_labels_ea,
+                val_probs   = val_probs_ea,
+                dev_df      = _df_dev_raw,
+                dev_labels  = dev_labels_ea,
+                dev_probs   = dev_probs_ea,
+                test_df     = _df_test_raw,
+                test_labels = test_labels_ea,
+                test_probs  = test_probs_ea,
+            )
+            del _model_ea
+            torch.cuda.empty_cache()
+
     del model
     torch.cuda.empty_cache()
     return result
@@ -359,19 +374,41 @@ def run_all():
     tokenizer = AutoTokenizer.from_pretrained(CFG.MODEL_NAME)
     train_ds, val_ds, target_ds, dev_ds, test_ds, submit_ds = build_data(tokenizer)
 
+    # Lưu DataFrame gốc để dùng cho error analysis (cần cột text, source, label)
+    import polars as pl
+    import pandas as pd
+    from sklearn.model_selection import train_test_split
+
+    _df_train_full = pl.read_ndjson(CFG.TRAIN_PATH).to_pandas()
+    _df_train_full["domain_id"] = 0
+    _, df_val_raw = train_test_split(
+        _df_train_full, test_size=CFG.VAL_SIZE,
+        random_state=CFG.SEED, stratify=_df_train_full["label"]
+    )
+    df_dev_raw  = pl.read_ndjson(CFG.DEV_PATH).to_pandas()
+    df_test_raw = pl.read_ndjson(CFG.TEST_LABELED_PATH).to_pandas()
+    # Đảm bảo có cột source
+    for df in [df_val_raw, df_dev_raw, df_test_raw]:
+        if "source" not in df.columns:
+            df["source"] = "unknown"
+    val_texts = df_val_raw["text"].tolist()
+
     all_results  = []
     best_state   = None   # State dict của run tốt nhất để dùng nếu cần threshold calib
 
     for run_cfg in ABLATION_RUNS:
         result = run_single(
-            run_cfg   = run_cfg,
-            train_ds  = train_ds,
-            val_ds    = val_ds,
-            target_ds = target_ds,
-            dev_ds    = dev_ds,
-            test_ds   = test_ds,
-            submit_ds = submit_ds,
-            tokenizer = tokenizer,
+            run_cfg      = run_cfg,
+            train_ds     = train_ds,
+            val_ds       = val_ds,
+            target_ds    = target_ds,
+            dev_ds       = dev_ds,
+            test_ds      = test_ds,
+            submit_ds    = submit_ds,
+            tokenizer    = tokenizer,
+            _val_texts   = val_texts,
+            _df_dev_raw  = df_dev_raw,
+            _df_test_raw = df_test_raw,
         )
         all_results.append(result)
 
