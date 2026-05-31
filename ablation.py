@@ -149,6 +149,22 @@ def run_single(
         use_dann    = run_cfg.use_dann,
     ).to(device)
 
+    # ── In thống kê tham số ─────────────────────────────────────
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(
+        p.numel() for p in model.parameters()
+        if p.requires_grad
+    )
+    
+    print("\n" + "=" * 70)
+    print("MODEL PARAMETERS")
+    print("=" * 70)
+    print(f"Total params      : {total_params:,}")
+    print(f"Trainable params  : {trainable_params:,}")
+    print(f"Frozen params     : {total_params - trainable_params:,}")
+    print(f"Trainable ratio   : {100 * trainable_params / total_params:.4f}%")
+    print("=" * 70)
+
     # ── Nếu chỉ cần threshold calibration, load weights và skip training ──────
     if is_threshold_only and pretrained_state is not None:
         src_run_id = pretrained_state.get("source_run_id", "")
@@ -193,6 +209,12 @@ def run_single(
             },
             reinit=True,
         )
+        
+        wandb.config.update({
+            "total_params": total_params,
+            "trainable_params": trainable_params,
+            "trainable_ratio": 100 * trainable_params / total_params,
+        })
 
         best_f1, best_state, no_improve, global_step = 0.0, None, 0, 0
         history = {}
