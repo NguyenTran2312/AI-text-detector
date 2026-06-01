@@ -7,20 +7,21 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import wandb
+from torch.amp import autocast 
 
 from sklearn.metrics import f1_score, accuracy_score, roc_curve, roc_auc_score
 
 from configs.config import CFG
 from src.model import compute_lambda
 
+# Kích hoạt tốc độ tối đa cho Tensor Cores kiến trúc Ada/Blackwell
+torch.set_float32_matmul_precision('high')
 
 # ── Checkpoint helpers ────────────────────────────────────────────────────────
 def ckpt_path(run_id: str, tag: str = "best") -> str:
     return os.path.join(CFG.CKPT_DIR, f"{run_id}_{tag}.pt")
 
-
-def save_checkpoint(model, optimizer, scheduler, epoch: int, val_f1: float,
-                    run_id: str, tag: str = "best"):
+def save_checkpoint(model, optimizer, scheduler, epoch: int, val_f1: float, run_id: str, tag: str = "best"):
     path = ckpt_path(run_id, tag)
     torch.save({
         "epoch":       epoch,
@@ -31,7 +32,6 @@ def save_checkpoint(model, optimizer, scheduler, epoch: int, val_f1: float,
     }, path)
     print(f"  [CKPT] Saved {os.path.basename(path)} — epoch={epoch+1}, val_F1={val_f1:.4f}")
 
-
 def load_checkpoint(path: str, model, optimizer=None, scheduler=None):
     ckpt = torch.load(path, map_location="cpu")
     model.load_state_dict(ckpt["model_state"])
@@ -40,13 +40,11 @@ def load_checkpoint(path: str, model, optimizer=None, scheduler=None):
     print(f"  [CKPT] Loaded {os.path.basename(path)} — epoch={ckpt.get('epoch',0)+1}, val_F1={ckpt.get('val_f1',0):.4f}")
     return ckpt.get("epoch", 0), ckpt.get("val_f1", 0.0)
 
-
 def run_already_done(run_id: str) -> bool:
     return os.path.exists(ckpt_path(run_id, "final"))
 
-
 # ── Train one epoch ───────────────────────────────────────────────────────────
-def train_one_epoch(model, source_loader, target_loader, optimizer, scheduler,
+def train_one_epoch(model, source_loader, target_loader, optimizer, scheduler, scaler,
                     epoch: int, total_epochs: int, global_step: int, use_dann: bool,
                     device):
     model.train()
@@ -76,38 +74,46 @@ def train_one_epoch(model, source_loader, target_loader, optimizer, scheduler,
         src_cls  = src["labels_class"].to(device)
         src_dom  = src["labels_domain"].to(device)
 
-        src_class_logits, src_domain_logits = model(src_ids, src_mask)
-        loss_class = ce_class(src_class_logits, src_cls)
-        loss       = loss_class
-        loss_domain_val = 0.0
+        # [ĐÃ SỬA LỖI] device_type=device.type để lấy String
+        with autocast(device_type=device.type, dtype=torch.bfloat16):
+            src_class_logits, src_domain_logits = model(src_ids, src_mask)
+            loss_class = ce_class(src_class_logits, src_cls)
+            loss       = loss_class
+            loss_domain_val = 0.0
 
-        if use_dann and src_domain_logits is not None:
-            loss_domain_src = ce_domain(src_domain_logits, src_dom)
-            if target_iter is not None:
-                tgt = next(target_iter)
-                tgt_ids  = tgt["input_ids"].to(device)
-                tgt_mask = tgt["attention_mask"].to(device)
-                tgt_dom  = tgt["labels_domain"].to(device)
-                _, tgt_domain_logits = model(tgt_ids, tgt_mask)
-                loss_domain = (loss_domain_src + ce_domain(tgt_domain_logits, tgt_dom)) / 2.0
-            else:
-                loss_domain = loss_domain_src
-            loss = loss_class + lambda_ * loss_domain
-            loss_domain_val = loss_domain.item()
+            if use_dann and src_domain_logits is not None:
+                loss_domain_src = ce_domain(src_domain_logits, src_dom)
+                if target_iter is not None:
+                    tgt = next(target_iter)
+                    tgt_ids  = tgt["input_ids"].to(device)
+                    tgt_mask = tgt["attention_mask"].to(device)
+                    tgt_dom  = tgt["labels_domain"].to(device)
+                    _, tgt_domain_logits = model(tgt_ids, tgt_mask)
+                    loss_domain = (loss_domain_src + ce_domain(tgt_domain_logits, tgt_dom)) / 2.0
+                else:
+                    loss_domain = loss_domain_src
+                
+                loss = loss_class + lambda_ * loss_domain
+                loss_domain_val = loss_domain.item()
 
-        (loss / CFG.ACCUM_STEPS).backward()
+        scaler.scale(loss / CFG.ACCUM_STEPS).backward()
 
         total_loss        += loss.item()
         total_class_loss  += loss_class.item()
         total_domain_loss += loss_domain_val
-        all_preds.extend(src_class_logits.argmax(-1).detach().cpu().numpy())
+        
+        all_preds.extend(src_class_logits.argmax(-1).detach().float().cpu().numpy())
         all_labels.extend(src_cls.cpu().numpy())
 
         if (step + 1) % CFG.ACCUM_STEPS == 0 or (step + 1) == len_dl:
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), CFG.GRAD_CLIP)
-            optimizer.step()
+            
+            scaler.step(optimizer)
+            scaler.update()
+            
             scheduler.step()
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
 
             if global_step % CFG.LOG_EVERY_N_STEPS == 0:
                 wandb.log({
@@ -121,14 +127,7 @@ def train_one_epoch(model, source_loader, target_loader, optimizer, scheduler,
 
     train_f1  = f1_score(all_labels, all_preds, average="macro")
     train_acc = accuracy_score(all_labels, all_preds)
-    return (
-        total_loss        / len_dl,
-        total_class_loss  / len_dl,
-        total_domain_loss / len_dl,
-        train_f1, train_acc,
-        global_step,
-    )
-
+    return (total_loss / len_dl, total_class_loss / len_dl, total_domain_loss / len_dl, train_f1, train_acc, global_step)
 
 # ── Evaluate ──────────────────────────────────────────────────────────────────
 @torch.no_grad()
@@ -143,11 +142,14 @@ def evaluate(model, loader, device):
         mask   = batch["attention_mask"].to(device)
         labels = batch["labels_class"].to(device)
 
-        class_logits, _ = model(ids, mask)
-        total_loss += ce(class_logits, labels).item()
+        # [ĐÃ SỬA LỖI] device_type=device.type để lấy String
+        with autocast(device_type=device.type, dtype=torch.bfloat16):
+            class_logits, _ = model(ids, mask)
+            total_loss += ce(class_logits, labels).item()
 
-        probs = torch.softmax(class_logits, -1)[:, 1].cpu().numpy()
-        preds = class_logits.argmax(-1).cpu().numpy()
+        probs = torch.softmax(class_logits, -1)[:, 1].float().cpu().numpy()
+        preds = class_logits.argmax(-1).float().cpu().numpy()
+        
         all_probs.extend(probs)
         all_preds.extend(preds)
         all_labels.extend(labels.cpu().numpy())
@@ -156,34 +158,33 @@ def evaluate(model, loader, device):
     acc = accuracy_score(all_labels, all_preds)
     return f1, acc, total_loss / len(loader), np.array(all_probs), np.array(all_labels)
 
-
 # ── FPR / Threshold helpers ───────────────────────────────────────────────────
 def compute_fpr_at_tpr(probs, labels, target_tpr: float = 0.95):
     fpr_arr, tpr_arr, thresholds = roc_curve(labels, probs, pos_label=1)
     idx = np.argmin(np.abs(tpr_arr - target_tpr))
     return float(fpr_arr[idx]), float(thresholds[idx])
 
-
 def find_optimal_threshold(probs, labels, target_fpr: float = 0.05):
     fpr_arr, tpr_arr, thresholds = roc_curve(labels, probs, pos_label=1)
     mask = fpr_arr <= target_fpr
-    if not mask.any():
-        return float(thresholds[0]), float(fpr_arr[0])
+    if not mask.any(): return float(thresholds[0]), float(fpr_arr[0])
     best_idx = np.argmax(tpr_arr[mask])
     return float(thresholds[mask][best_idx]), float(fpr_arr[mask][best_idx])
 
-
 # ── Generate submission ───────────────────────────────────────────────────────
 @torch.no_grad()
-def generate_submission(model, submit_loader, submit_ds, threshold: float,
-                        run_id: str, device) -> pd.DataFrame:
+def generate_submission(model, submit_loader, submit_ds, threshold: float, run_id: str, device) -> pd.DataFrame:
     model.eval()
     all_preds = []
     for batch in submit_loader:
         ids  = batch["input_ids"].to(device)
         mask = batch["attention_mask"].to(device)
-        class_logits, _ = model(ids, mask)
-        probs = torch.softmax(class_logits, -1)[:, 1].cpu().numpy()
+        
+        # [ĐÃ SỬA LỖI] device_type=device.type để lấy String
+        with autocast(device_type=device.type, dtype=torch.bfloat16):
+            class_logits, _ = model(ids, mask)
+            
+        probs = torch.softmax(class_logits, -1)[:, 1].float().cpu().numpy()
         all_preds.extend((probs >= threshold).astype(int))
 
     df_sub = pd.DataFrame({"id": submit_ds.ids, "label": all_preds})
