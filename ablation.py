@@ -460,5 +460,8 @@ def _print_summary_table(results: list):
 
 # ==============================================================================
 if __name__ == "__main__":
+    torch.set_float32_matmul_precision("high")  # dùng TF32 cho matmul
+    torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = True
+    
     wandb.login()
     run_all()
