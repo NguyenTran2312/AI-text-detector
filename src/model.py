@@ -1,14 +1,11 @@
 # -*- coding: utf-8 -*-
-# src/model.py — DANN Text Detector với LoRA + Gradient Reversal Layer
+# src/model.py — DANN Text Detector với LoRA + Gradient Reversal Layer (Dynamic Model Support)
 
 import numpy as np
 import torch
 import torch.nn as nn
 from transformers import AutoModel
 from peft import get_peft_model, LoraConfig, TaskType
-
-from configs.config import CFG
-
 
 class GradientReversalFunction(torch.autograd.Function):
     @staticmethod
@@ -20,7 +17,6 @@ class GradientReversalFunction(torch.autograd.Function):
     def backward(ctx, grad_output):
         return grad_output.neg() * ctx.alpha, None
 
-
 class GradientReversalLayer(nn.Module):
     def __init__(self, alpha: float = 1.0):
         super().__init__()
@@ -28,7 +24,6 @@ class GradientReversalLayer(nn.Module):
 
     def forward(self, x):
         return GradientReversalFunction.apply(x, self.alpha)
-
 
 class DANN_TextDetector(nn.Module):
     def __init__(self, model_name: str, num_classes: int, num_domains: int,
@@ -38,16 +33,26 @@ class DANN_TextDetector(nn.Module):
         self.transformer = AutoModel.from_pretrained(model_name)
 
         if use_lora:
+            # DYNAMIC MAPPING: Tự động nhận diện target_modules theo kiến trúc backbone
+            model_name_lower = model_name.lower()
+            if "deberta" in model_name_lower:
+                target_modules = ["query_proj", "value_proj"]
+            elif "roberta" in model_name_lower:
+                target_modules = ["query", "value"]
+            else:
+                target_modules = ["query", "value"]  # Cấu hình fallback mặc định
+
             peft_config = LoraConfig(
                 task_type      = TaskType.FEATURE_EXTRACTION,
                 r              = 8,
                 lora_alpha     = 16,
-                target_modules = ["query", "value"],
+                target_modules = target_modules,
                 lora_dropout   = 0.1,
                 modules_to_save= ["class_head", "domain_head"],
             )
             self.transformer = get_peft_model(self.transformer, peft_config)
 
+        # DYNAMIC HIDDEN SIZE: Tự động bốc kích thước ẩn từ config gốc (768, 1024, v.v.)
         hidden = self.transformer.config.hidden_size
 
         # Nhánh phân loại chính (Human vs Machine)
@@ -72,7 +77,6 @@ class DANN_TextDetector(nn.Module):
         class_logits  = self.class_head(cls_output)
         domain_logits = self.domain_head(self.grl(cls_output)) if self.use_dann else None
         return class_logits, domain_logits
-
 
 def compute_lambda(epoch: int, batch_idx: int, num_batches: int,
                    total_epochs: int, gamma: float = 10.0) -> float:
