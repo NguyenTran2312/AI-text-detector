@@ -19,8 +19,8 @@ class CFG:
     NUM_DOMAINS  = 2   # 0: Source (train), 1: Target (dev)
 
     # ── Training ──────────────────────────────────────────────────────────────
-    BATCH_SIZE  = 8
-    ACCUM_STEPS = 4
+    BATCH_SIZE  = 32
+    ACCUM_STEPS = 1
     EPOCHS       = 3
     PATIENCE     = 1
     VAL_SIZE     = 0.2
