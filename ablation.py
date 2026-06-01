@@ -43,12 +43,91 @@ class AblationConfig:
     warmup_ratio: float = 0.1
     history:      dict  = field(default_factory=dict)
 
-# CẤU HÌNH BẢNG CHẠY THỬ NGHIỆM ĐA MODEL BACKBONE
+# Thay thế đoạn này vào file ablation.py của bạn
 ABLATION_RUNS = [
-    AblationConfig(run_id="run1_roberta_baseline", description="Baseline — RoBERTa+LoRA, không DANN", model_name="roberta-base", use_dann=False, use_dev_x15=False, lr=2e-5, dropout=0.3, warmup_ratio=0.1),
-    AblationConfig(run_id="run2_deberta_dann", description="DANN — DeBERTa-v3+LoRA kết hợp Domain Adaptation", model_name="microsoft/deberta-v3-base", use_dann=True, use_dev_x15=True, lr=2e-5, dropout=0.3, warmup_ratio=0.1),
-    AblationConfig(run_id="run3_distil_baseline", description="Mô hình thu gọn — DistilRoBERTa Baseline", model_name="distilroberta-base", use_dann=False, use_dev_x15=False, lr=2e-5, dropout=0.3, warmup_ratio=0.1),
-    AblationConfig(run_id="run4_roberta_dann_tuned", description="DANN — RoBERTa Regularized mạnh (dropout=0.5)", model_name="roberta-base", use_dann=True, use_dev_x15=True, lr=2e-5, dropout=0.5, warmup_ratio=0.06),
+    # ──────────────────────────────────────────────────────────────────────────
+    # ─── BACKBONE 1: RoBERTa-base (Mô hình gốc)
+    # ──────────────────────────────────────────────────────────────────────────
+    AblationConfig(
+        run_id="run1_baseline", 
+        description="Baseline — RoBERTa+LoRA, không DANN, không dev×15", 
+        model_name="roberta-base", 
+        use_dann=False, use_dev_x15=False, lr=2e-5, dropout=0.3, warmup_ratio=0.1
+    ),
+    AblationConfig(
+        run_id="run2_dann_default", 
+        description="DANN — RoBERTa config gốc (lr=2e-5, dropout=0.3, warmup=0.1)", 
+        model_name="roberta-base", 
+        use_dann=True, use_dev_x15=True, lr=2e-5, dropout=0.3, warmup_ratio=0.1
+    ),
+    AblationConfig(
+        run_id="run3_dann_lr_low", 
+        description="DANN — RoBERTa lr=1e-5 (Học chậm, giảm thiểu quên kiến thức cũ)", 
+        model_name="roberta-base", 
+        use_dann=True, use_dev_x15=True, lr=1e-5, dropout=0.3, warmup_ratio=0.1
+    ),
+    AblationConfig(
+        run_id="run4_dann_dropout_warmup", 
+        description="DANN — RoBERTa dropout=0.5, warmup=0.06 (Regularize mạnh)", 
+        model_name="roberta-base", 
+        use_dann=True, use_dev_x15=True, lr=2e-5, dropout=0.5, warmup_ratio=0.06
+    ),
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # ─── BACKBONE 2: DeBERTa-v3-base (Kiến trúc chú ý tách biệt)
+    # ──────────────────────────────────────────────────────────────────────────
+    AblationConfig(
+        run_id="run1_deberta_base", 
+        description="Baseline — DeBERTa+LoRA, không DANN, không dev×15", 
+        model_name="microsoft/deberta-v3-base", 
+        use_dann=False, use_dev_x15=False, lr=2e-5, dropout=0.3, warmup_ratio=0.1
+    ),
+    AblationConfig(
+        run_id="run2_deberta_dann", 
+        description="DANN — DeBERTa config gốc (lr=2e-5, dropout=0.3, warmup=0.1)", 
+        model_name="microsoft/deberta-v3-base", 
+        use_dann=True, use_dev_x15=True, lr=2e-5, dropout=0.3, warmup_ratio=0.1
+    ),
+    AblationConfig(
+        run_id="run3_deberta_dann_lr_low", 
+        description="DANN — DeBERTa lr=1e-5 (Học chậm, thích ứng miền tối ưu)", 
+        model_name="microsoft/deberta-v3-base", 
+        use_dann=True, use_dev_x15=True, lr=1e-5, dropout=0.3, warmup_ratio=0.1
+    ),
+    AblationConfig(
+        run_id="run4_deberta_dann_dropout_warmup", 
+        description="DANN — DeBERTa dropout=0.5, warmup=0.06 (Chống quá khớp miền nguồn)", 
+        model_name="microsoft/deberta-v3-base", 
+        use_dann=True, use_dev_x15=True, lr=2e-5, dropout=0.5, warmup_ratio=0.06
+    ),
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # ─── BACKBONE 3: DistilRoBERTa-base (Mô hình chưng cất, tối ưu tốc độ)
+    # ──────────────────────────────────────────────────────────────────────────
+    AblationConfig(
+        run_id="run1_distil_baseline", 
+        description="Baseline — DistilRoBERTa+LoRA, không DANN, không dev×15", 
+        model_name="distilroberta-base", 
+        use_dann=False, use_dev_x15=False, lr=2e-5, dropout=0.3, warmup_ratio=0.1
+    ),
+    AblationConfig(
+        run_id="run2_distil_dann_default", 
+        description="DANN — DistilRoBERTa config gốc (lr=2e-5, dropout=0.3, warmup=0.1)", 
+        model_name="distilroberta-base", 
+        use_dann=True, use_dev_x15=True, lr=2e-5, dropout=0.3, warmup_ratio=0.1
+    ),
+    AblationConfig(
+        run_id="run3_distil_dann_lr_low", 
+        description="DANN — DistilRoBERTa lr=1e-5 (Học chậm trên mạng nén nhẹ)", 
+        model_name="distilroberta-base", 
+        use_dann=True, use_dev_x15=True, lr=1e-5, dropout=0.3, warmup_ratio=0.1
+    ),
+    AblationConfig(
+        run_id="run4_distil_dann_dropout_warmup", 
+        description="DANN — DistilRoBERTa dropout=0.5, warmup=0.06 (Tăng cường tổng quát hóa)", 
+        model_name="distilroberta-base", 
+        use_dann=True, use_dev_x15=True, lr=2e-5, dropout=0.5, warmup_ratio=0.06
+    ),
 ]
 
 def seed_everything(seed: int = CFG.SEED):
