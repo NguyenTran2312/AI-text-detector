@@ -21,7 +21,7 @@ class CFG:
     # Thử nghiệm với 128. Nếu máy chạy êm và VRAM vẫn còn trống nhiều (xem bằng nvidia-smi),
     # bạn có thể mạnh dạn đẩy lên 256. Nếu báo lỗi "CUDA Out of Memory", hãy lùi về 128 hoặc 96.
     BATCH_SIZE  = 128  
-    ACCUM_STEPS = 1
+    ACCUM_STEPS = 2
     EPOCHS       = 3
     PATIENCE     = 1
     VAL_SIZE     = 0.2
