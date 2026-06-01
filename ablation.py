@@ -176,6 +176,9 @@ def run_single(
             num_warmup_steps   = warmup_steps,
             num_training_steps = total_steps,
         )
+        
+        # [ĐÃ SỬA LỖI]: Khởi tạo scaler 
+        scaler = torch.amp.GradScaler('cuda') if hasattr(torch, 'amp') else torch.cuda.amp.GradScaler()
 
         # ── W&B ───────────────────────────────────────────────────────────────
         wrun = wandb.init(
@@ -202,10 +205,11 @@ def run_single(
         history = {}
 
         for epoch in range(CFG.EPOCHS):
+            # [ĐÃ SỬA LỖI]: Truyền scaler vào hàm
             (train_loss, train_cls_loss, train_dom_loss,
              train_f1, train_acc, global_step) = train_one_epoch(
                 model, train_loader, target_loader,
-                optimizer, scheduler,
+                optimizer, scheduler, scaler,
                 epoch, CFG.EPOCHS, global_step,
                 run_cfg.use_dann, device,
             )
