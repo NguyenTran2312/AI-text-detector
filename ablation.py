@@ -14,7 +14,7 @@ from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from configs.config import CFG
-from src.dataset import build_data, make_loaders
+from src.dataset import make_loaders, TextDetectionDataset, InferenceDataset
 from src.model import DANN_TextDetector
 from src.train import (
     ckpt_path, save_checkpoint, load_checkpoint,
@@ -35,6 +35,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class AblationConfig:
     run_id:       str
     description:  str
+    model_name:   str   # <-- THÊM THAM SỐ: Định danh mô hình backbone động
     use_dann:     bool
     use_dev_x15:  bool
     lr:           float = 2e-5
@@ -42,11 +43,12 @@ class AblationConfig:
     warmup_ratio: float = 0.1
     history:      dict  = field(default_factory=dict)
 
+# CẤU HÌNH BẢNG CHẠY THỬ NGHIỆM ĐA MODEL BACKBONE
 ABLATION_RUNS = [
-    AblationConfig(run_id="run1_baseline", description="Baseline — RoBERTa+LoRA, không DANN, không dev×15", use_dann=False, use_dev_x15=False, lr=2e-5, dropout=0.3, warmup_ratio=0.1),
-    AblationConfig(run_id="run2_dann_default", description="DANN — config gốc (lr=2e-5, dropout=0.3, warmup=0.1)", use_dann=True, use_dev_x15=True, lr=2e-5, dropout=0.3, warmup_ratio=0.1),
-    AblationConfig(run_id="run3_dann_lr_low", description="DANN — lr=1e-5 (học chậm hơn, ít catastrophic forgetting hơn)", use_dann=True, use_dev_x15=True, lr=1e-5, dropout=0.3, warmup_ratio=0.1),
-    AblationConfig(run_id="run4_dann_dropout_warmup", description="DANN — dropout=0.5, warmup=0.06 (regularize mạnh hơn)", use_dann=True, use_dev_x15=True, lr=2e-5, dropout=0.5, warmup_ratio=0.06),
+    AblationConfig(run_id="run1_roberta_baseline", description="Baseline — RoBERTa+LoRA, không DANN", model_name="roberta-base", use_dann=False, use_dev_x15=False, lr=2e-5, dropout=0.3, warmup_ratio=0.1),
+    AblationConfig(run_id="run2_deberta_dann", description="DANN — DeBERTa-v3+LoRA kết hợp Domain Adaptation", model_name="microsoft/deberta-v3-base", use_dann=True, use_dev_x15=True, lr=2e-5, dropout=0.3, warmup_ratio=0.1),
+    AblationConfig(run_id="run3_distil_baseline", description="Mô hình thu gọn — DistilRoBERTa Baseline", model_name="distilroberta-base", use_dann=False, use_dev_x15=False, lr=2e-5, dropout=0.3, warmup_ratio=0.1),
+    AblationConfig(run_id="run4_roberta_dann_tuned", description="DANN — RoBERTa Regularized mạnh (dropout=0.5)", model_name="roberta-base", use_dann=True, use_dev_x15=True, lr=2e-5, dropout=0.5, warmup_ratio=0.06),
 ]
 
 def seed_everything(seed: int = CFG.SEED):
@@ -70,14 +72,14 @@ def run_single(
     seed_everything()
     run_id = run_cfg.run_id
 
-    print(f"\n{'='*70}\n  [{run_id}]  {run_cfg.description}\n{'='*70}")
+    print(f"\n{'='*70}\n  [{run_id}]  Backend: {run_cfg.model_name}\n  👉 {run_cfg.description}\n{'='*70}")
 
     train_loader, val_loader, target_loader, dev_loader, test_loader, submit_loader = make_loaders(
         train_ds, val_ds, target_ds, dev_ds, test_ds, submit_ds, tokenizer, run_cfg.use_dev_x15,
     )
 
     model = DANN_TextDetector(
-        model_name=CFG.MODEL_NAME, num_classes=CFG.NUM_CLASSES, num_domains=CFG.NUM_DOMAINS,
+        model_name=run_cfg.model_name, num_classes=CFG.NUM_CLASSES, num_domains=CFG.NUM_DOMAINS,
         dropout=run_cfg.dropout, use_lora=True, use_dann=run_cfg.use_dann,
     ).to(device)
 
@@ -103,7 +105,7 @@ def run_single(
             config={
                 "run_id": run_id, "use_dann": run_cfg.use_dann, "use_dev_x15": run_cfg.use_dev_x15,
                 "lr": run_cfg.lr, "dropout": run_cfg.dropout, "warmup_ratio": run_cfg.warmup_ratio,
-                "epochs": CFG.EPOCHS, "model": CFG.MODEL_NAME,
+                "epochs": CFG.EPOCHS, "model": run_cfg.model_name,
             }, reinit=True
         )
 
@@ -160,11 +162,10 @@ def run_single(
         "model_state": {k: v.cpu().clone() for k, v in model.state_dict().items()},
     }
 
-    # KÍCH HOẠT HÀM ERROR ANALYSIS SẠCH SẼ MỚI
     if _df_val_raw is not None and _df_dev_raw is not None:
         _ckpt = ckpt_path(run_id, "final")
         if os.path.exists(_ckpt):
-            _model_ea = DANN_TextDetector(CFG.MODEL_NAME, CFG.NUM_CLASSES, CFG.NUM_DOMAINS, dropout=run_cfg.dropout, use_lora=True, use_dann=run_cfg.use_dann).to(device)
+            _model_ea = DANN_TextDetector(run_cfg.model_name, CFG.NUM_CLASSES, CFG.NUM_DOMAINS, dropout=run_cfg.dropout, use_lora=True, use_dann=run_cfg.use_dann).to(device)
             load_checkpoint(_ckpt, _model_ea)
             run_error_analysis(
                 run_id=run_id, model=_model_ea, tokenizer=tokenizer, device=device,
@@ -181,20 +182,19 @@ def run_single(
 
 def run_all():
     seed_everything()
-    tokenizer = AutoTokenizer.from_pretrained(CFG.MODEL_NAME)
-    train_ds, val_ds, target_ds, dev_ds, test_ds, submit_ds = build_data(tokenizer)
-
+    
     import polars as pl
     from sklearn.model_selection import train_test_split
 
+    # Đọc dữ liệu thô từ đĩa một lần duy nhất để tối ưu hóa I/O tốc độ cao
+    print("📖 Đang nạp dữ liệu thô từ hệ thống...")
     _df_train_full = pl.read_ndjson(CFG.TRAIN_PATH).to_pandas()
     _df_train_full["domain_id"] = 0
-    _, df_val_raw = train_test_split(_df_train_full, test_size=CFG.VAL_SIZE, random_state=CFG.SEED, stratify=_df_train_full["label"])
+    df_train_raw, df_val_raw = train_test_split(_df_train_full, test_size=CFG.VAL_SIZE, random_state=CFG.SEED, stratify=_df_train_full["label"])
     
     df_dev_raw = pl.read_ndjson(CFG.DEV_PATH).to_pandas()
     df_dev_raw["domain_id"] = 1
     
-    # LOAD CẢ HAI TẬP TEST LABELED VÀ UNLABELED ĐỂ PHÂN TÍCH RIÊNG BIỆT
     df_test_labeled_raw = pl.read_ndjson(CFG.TEST_LABELED_PATH).to_pandas()
     df_test_labeled_raw["domain_id"] = 1
 
@@ -208,6 +208,23 @@ def run_all():
     best_state  = None
 
     for run_cfg in ABLATION_RUNS:
+        # BƯỚC PATCH QUAN TRỌNG: Ghi đè cấu hình tên mô hình toàn cục trước khi gọi các module bổ trợ
+        CFG.MODEL_NAME = run_cfg.model_name
+        
+        # Tạo mới bộ Tokenizer tương thích chính xác với backbone hiện tại
+        tokenizer = AutoTokenizer.from_pretrained(run_cfg.model_name)
+        
+        # Tạo tập dữ liệu target ×15 động dựa trên cấu hình của run
+        df_dev_x15 = pd.concat([df_dev_raw] * 15, ignore_index=True) if run_cfg.use_dev_x15 else df_dev_raw
+
+        # Khởi tạo Dataset phân tách riêng biệt, ép kiểu Tokenize sạch sẽ
+        train_ds  = TextDetectionDataset(df_train_raw,        tokenizer, CFG.MAX_LEN)
+        val_ds    = TextDetectionDataset(df_val_raw,          tokenizer, CFG.MAX_LEN)
+        target_ds = TextDetectionDataset(df_dev_x15,          tokenizer, CFG.MAX_LEN)
+        dev_ds    = TextDetectionDataset(df_dev_raw,          tokenizer, CFG.MAX_LEN)
+        test_ds   = TextDetectionDataset(df_test_labeled_raw, tokenizer, CFG.MAX_LEN)
+        submit_ds = InferenceDataset(df_test_unlabeled_raw,   tokenizer, CFG.MAX_LEN)
+
         result = run_single(
             run_cfg=run_cfg, train_ds=train_ds, val_ds=val_ds, target_ds=target_ds,
             dev_ds=dev_ds, test_ds=test_ds, submit_ds=submit_ds, tokenizer=tokenizer,
