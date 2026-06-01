@@ -126,7 +126,7 @@ def run_single(
     tokenizer,
     is_threshold_only: bool  = False,
     pretrained_state: dict   = None,
-    _val_texts: list         = None,
+    _df_val_raw              = None,
     _df_dev_raw              = None,
     _df_test_raw             = None,
 ) -> dict:
@@ -324,33 +324,23 @@ def run_single(
     )
 
     # ── Error Analysis ───────────────────────────────────────────────────────
-    # val_texts, df_val_raw, df_dev_raw, df_test_raw được định nghĩa trong run_all()
-    # và truyền vào qua closure — ta dùng nonlocal pattern đơn giản hơn:
-    # các biến này được truyền vào run_single qua kwargs
-    if _val_texts is not None and _df_dev_raw is not None and _df_test_raw is not None:
-        # Evaluate lại để lấy probs của val (đã evaluate trong training loop nhưng không lưu)
-        _model_ea = DANN_TextDetector(
-            CFG.MODEL_NAME, CFG.NUM_CLASSES, CFG.NUM_DOMAINS,
-            dropout=run_cfg.dropout, use_lora=True, use_dann=run_cfg.use_dann,
-        ).to(device)
+    if _df_val_raw is not None and _df_dev_raw is not None:
         _ckpt = ckpt_path(run_id, "final")
         if os.path.exists(_ckpt):
+            from src.model import DANN_TextDetector
+            _model_ea = DANN_TextDetector(
+                CFG.MODEL_NAME, CFG.NUM_CLASSES, CFG.NUM_DOMAINS,
+                dropout=run_cfg.dropout, use_lora=True, use_dann=run_cfg.use_dann,
+            ).to(device)
             load_checkpoint(_ckpt, _model_ea)
-            _, _, _, val_probs_ea,  val_labels_ea  = evaluate(_model_ea, val_loader,  device)
-            _, _, _, dev_probs_ea,  dev_labels_ea  = evaluate(_model_ea, dev_loader,  device)
-            _, _, _, test_probs_ea, test_labels_ea = evaluate(_model_ea, test_loader, device)
-
             run_error_analysis(
-                run_id      = run_id,
-                val_texts   = _val_texts,
-                val_labels  = val_labels_ea,
-                val_probs   = val_probs_ea,
-                dev_df      = _df_dev_raw,
-                dev_labels  = dev_labels_ea,
-                dev_probs   = dev_probs_ea,
-                test_df     = _df_test_raw,
-                test_labels = test_labels_ea,
-                test_probs  = test_probs_ea,
+                run_id    = run_id,
+                model     = _model_ea,
+                tokenizer = tokenizer,
+                device    = device,
+                df_val    = _df_val_raw,
+                df_dev    = _df_dev_raw,
+                df_test   = _df_test_raw,
             )
             del _model_ea
             torch.cuda.empty_cache()
@@ -390,7 +380,7 @@ def run_all():
     for df in [df_val_raw, df_dev_raw, df_test_raw]:
         if "source" not in df.columns:
             df["source"] = "unknown"
-    val_texts = df_val_raw["text"].tolist()
+    # df_val_raw đã sẵn sàng cho error analysis
 
     all_results  = []
     best_state   = None   # State dict của run tốt nhất để dùng nếu cần threshold calib
@@ -405,7 +395,7 @@ def run_all():
             test_ds      = test_ds,
             submit_ds    = submit_ds,
             tokenizer    = tokenizer,
-            _val_texts   = val_texts,
+            _df_val_raw  = df_val_raw,
             _df_dev_raw  = df_dev_raw,
             _df_test_raw = df_test_raw,
         )
