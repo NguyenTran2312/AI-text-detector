@@ -155,8 +155,8 @@ def run_single(
 
     # Trong run_single() sau khi khởi tạo model, trước khi train
     if torch.__version__ >= "2.0" and torch.cuda.is_available():
-    model = torch.compile(model, mode="reduce-overhead")
-    print("  [INFO] torch.compile() enabled")
+        model = torch.compile(model, mode="reduce-overhead")
+        print("  [INFO] torch.compile() enabled")
 
     # ── Nếu chỉ cần threshold calibration, load weights và skip training ──────
     if is_threshold_only and pretrained_state is not None:
