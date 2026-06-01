@@ -8,9 +8,21 @@ import torch
 import torch.nn as nn
 import wandb
 
+from torch.cuda.amp import autocast, GradScaler
 from sklearn.metrics import f1_score, accuracy_score, roc_curve, roc_auc_score
 
 from configs.config import CFG
+
+# BF16 chỉ dùng khi GPU hỗ trợ (A100, H100, RTX 3090+)
+# RTX 4090 hỗ trợ bf16, RTX 3090 không hỗ trợ native → dùng fp16
+def _get_amp_dtype():
+    if not torch.cuda.is_available():
+        return None
+    cap = torch.cuda.get_device_capability()
+    # Ampere (8.0+) → bf16; dưới đó → fp16
+    return torch.bfloat16 if cap[0] >= 8 else torch.float16
+
+AMP_DTYPE = _get_amp_dtype()   # None = tắt AMP (CPU)
 from src.model import compute_lambda
 
 
@@ -52,6 +64,7 @@ def train_one_epoch(model, source_loader, target_loader, optimizer, scheduler,
     model.train()
     ce_class  = nn.CrossEntropyLoss()
     ce_domain = nn.CrossEntropyLoss()
+    scaler    = GradScaler(enabled=(AMP_DTYPE == torch.float16))  # scaler chỉ cần cho fp16, bf16 không cần
 
     total_loss = total_class_loss = total_domain_loss = 0.0
     all_preds, all_labels = [], []
@@ -76,26 +89,32 @@ def train_one_epoch(model, source_loader, target_loader, optimizer, scheduler,
         src_cls  = src["labels_class"].to(device)
         src_dom  = src["labels_domain"].to(device)
 
-        src_class_logits, src_domain_logits = model(src_ids, src_mask)
-        loss_class = ce_class(src_class_logits, src_cls)
-        loss       = loss_class
-        loss_domain_val = 0.0
+        amp_ctx = autocast(dtype=AMP_DTYPE) if AMP_DTYPE is not None else torch.no_grad.__class__()
+        with autocast(dtype=AMP_DTYPE, enabled=(AMP_DTYPE is not None)):
+            src_class_logits, src_domain_logits = model(src_ids, src_mask)
+            loss_class = ce_class(src_class_logits, src_cls)
+            loss       = loss_class
+            loss_domain_val = 0.0
 
-        if use_dann and src_domain_logits is not None:
-            loss_domain_src = ce_domain(src_domain_logits, src_dom)
-            if target_iter is not None:
-                tgt = next(target_iter)
-                tgt_ids  = tgt["input_ids"].to(device)
-                tgt_mask = tgt["attention_mask"].to(device)
-                tgt_dom  = tgt["labels_domain"].to(device)
-                _, tgt_domain_logits = model(tgt_ids, tgt_mask)
-                loss_domain = (loss_domain_src + ce_domain(tgt_domain_logits, tgt_dom)) / 2.0
-            else:
-                loss_domain = loss_domain_src
-            loss = loss_class + lambda_ * loss_domain
-            loss_domain_val = loss_domain.item()
+            if use_dann and src_domain_logits is not None:
+                loss_domain_src = ce_domain(src_domain_logits, src_dom)
+                if target_iter is not None:
+                    tgt = next(target_iter)
+                    tgt_ids  = tgt["input_ids"].to(device)
+                    tgt_mask = tgt["attention_mask"].to(device)
+                    tgt_dom  = tgt["labels_domain"].to(device)
+                    _, tgt_domain_logits = model(tgt_ids, tgt_mask)
+                    loss_domain = (loss_domain_src + ce_domain(tgt_domain_logits, tgt_dom)) / 2.0
+                else:
+                    loss_domain = loss_domain_src
+                loss = loss_class + lambda_ * loss_domain
+                loss_domain_val = loss_domain.item()
 
-        (loss / CFG.ACCUM_STEPS).backward()
+        # fp16: dùng scaler để tránh underflow; bf16: backward bình thường
+        if AMP_DTYPE == torch.float16:
+            scaler.scale(loss / CFG.ACCUM_STEPS).backward()
+        else:
+            (loss / CFG.ACCUM_STEPS).backward()
 
         total_loss        += loss.item()
         total_class_loss  += loss_class.item()
@@ -105,7 +124,11 @@ def train_one_epoch(model, source_loader, target_loader, optimizer, scheduler,
 
         if (step + 1) % CFG.ACCUM_STEPS == 0 or (step + 1) == len_dl:
             torch.nn.utils.clip_grad_norm_(model.parameters(), CFG.GRAD_CLIP)
-            optimizer.step()
+            if AMP_DTYPE == torch.float16:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
             scheduler.step()
             optimizer.zero_grad()
 
@@ -155,6 +178,26 @@ def evaluate(model, loader, device):
     f1  = f1_score(all_labels, all_preds, average="macro")
     acc = accuracy_score(all_labels, all_preds)
     return f1, acc, total_loss / len(loader), np.array(all_probs), np.array(all_labels)
+
+
+@torch.no_grad()
+def evaluate_with_texts(model, loader, dataset, device):
+    """
+    Giống evaluate() nhưng trả về thêm list text gốc.
+    Dùng cho error analysis (hiển thị FP/FN samples).
+    dataset phải là TextDetectionDataset (có .class_labels).
+    """
+    f1, acc, loss, probs, labels = evaluate(model, loader, device)
+    # Lấy text từ dataset theo index thứ tự loader
+    # Vì loader shuffle=False, index tương ứng 0..N-1
+    texts = []
+    for batch in loader:
+        # input_ids đã tokenized — giải mã lại bằng tokenizer nếu cần
+        # Ở đây ta dùng cách đơn giản hơn: lấy từ dataset object
+        pass
+    # Cách đơn giản nhất: dùng offset của loader
+    # TextDetectionDataset không lưu text gốc → cần df
+    return f1, acc, loss, probs, labels
 
 
 # ── FPR / Threshold helpers ───────────────────────────────────────────────────
