@@ -153,6 +153,11 @@ def run_single(
         use_dann    = run_cfg.use_dann,
     ).to(device)
 
+    # Trong run_single() sau khi khởi tạo model, trước khi train
+    if torch.__version__ >= "2.0" and torch.cuda.is_available():
+    model = torch.compile(model, mode="reduce-overhead")
+    print("  [INFO] torch.compile() enabled")
+
     # ── Nếu chỉ cần threshold calibration, load weights và skip training ──────
     if is_threshold_only and pretrained_state is not None:
         src_run_id = pretrained_state.get("source_run_id", "")
