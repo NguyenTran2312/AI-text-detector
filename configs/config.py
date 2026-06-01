@@ -6,11 +6,10 @@ import torch
 
 class CFG:
     # ── Đường dẫn dữ liệu ────────────────────────────────────────────────────
-    # Colab/Kaggle: chỉnh lại các path này cho phù hợp môi trường của bạn
-    TRAIN_PATH          = "/workspace/cleaned_text_data.jsonl"
-    DEV_PATH            = "/workspace/SubtaskA/subtaskA_dev_monolingual.jsonl"
-    TEST_LABELED_PATH   = "/workspace/subtaskA_monolingual_labeled.jsonl"
-    TEST_UNLABELED_PATH = "/workspace/subtaskA_monolingual_unlabeled.jsonl"
+    TRAIN_PATH          = "/workspace/data/cleaned_text_data.jsonl"
+    DEV_PATH            = "/workspace/data/subtaskA_dev_monolingual.jsonl"
+    TEST_LABELED_PATH   = "/workspace/data/subtaskA_monolingual_labeled.jsonl"
+    TEST_UNLABELED_PATH = "/workspace/data/subtaskA_monolingual_unlabeled.jsonl"
 
     # ── Model ─────────────────────────────────────────────────────────────────
     MODEL_NAME   = "roberta-base"
@@ -18,13 +17,19 @@ class CFG:
     NUM_CLASSES  = 2   # 0: Human, 1: Machine
     NUM_DOMAINS  = 2   # 0: Source (train), 1: Target (dev)
 
-    # ── Training ──────────────────────────────────────────────────────────────
-    BATCH_SIZE  = 32
+    # ── Training (TỐI ƯU CHO RTX 5090 32GB VRAM) ─────────────────────────────
+    # Thử nghiệm với 128. Nếu máy chạy êm và VRAM vẫn còn trống nhiều (xem bằng nvidia-smi),
+    # bạn có thể mạnh dạn đẩy lên 256. Nếu báo lỗi "CUDA Out of Memory", hãy lùi về 128 hoặc 96.
+    BATCH_SIZE  = 128  
     ACCUM_STEPS = 1
     EPOCHS       = 3
     PATIENCE     = 1
     VAL_SIZE     = 0.2
     SEED         = 42
+
+    # ── Tối ưu phần cứng (16 vCPU) ────────────────────────────────────────────
+    NUM_WORKERS = 12
+    PIN_MEMORY  = True
 
     # ── Cố định (không tune trong ablation) ───────────────────────────────────
     WEIGHT_DECAY = 0.01
@@ -36,7 +41,7 @@ class CFG:
 
     # ── W&B ───────────────────────────────────────────────────────────────────
     WANDB_PROJECT = "ai-text-detector-ablation"
-    WANDB_ENTITY  = None   # Điền username W&B của bạn nếu cần
+    WANDB_ENTITY  = None
 
     # ── Output dirs ───────────────────────────────────────────────────────────
     BASE_DIR  = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
