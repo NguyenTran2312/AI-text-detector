@@ -19,17 +19,8 @@ class CFG:
     NUM_DOMAINS  = 2   # 0: Source (train), 1: Target (dev)
 
     # ── Training ──────────────────────────────────────────────────────────────
-    if torch.cuda.is_available():
-        vram_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
-        if vram_gb >= 32:
-            CFG.BATCH_SIZE  = 32   # RTX 5090 / A100 80GB
-            CFG.ACCUM_STEPS = 1    
-        elif vram_gb >= 24:
-            CFG.BATCH_SIZE  = 16   # RTX 4090
-            CFG.ACCUM_STEPS = 2
-        else:
-            CFG.BATCH_SIZE  = 8
-            CFG.ACCUM_STEPS = 4
+    BATCH_SIZE  = 8
+    ACCUM_STEPS = 4
     EPOCHS       = 3
     PATIENCE     = 1
     VAL_SIZE     = 0.2
