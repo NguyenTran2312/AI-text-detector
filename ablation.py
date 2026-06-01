@@ -327,7 +327,6 @@ def run_single(
     if _df_val_raw is not None and _df_dev_raw is not None:
         _ckpt = ckpt_path(run_id, "final")
         if os.path.exists(_ckpt):
-            from src.model import DANN_TextDetector
             _model_ea = DANN_TextDetector(
                 CFG.MODEL_NAME, CFG.NUM_CLASSES, CFG.NUM_DOMAINS,
                 dropout=run_cfg.dropout, use_lora=True, use_dann=run_cfg.use_dann,
