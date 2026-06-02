@@ -24,6 +24,8 @@ from src.train import (
 )
 from src.plots import plot_ablation_summary, plot_roc_curves
 from src.error_analysis import run_error_analysis
+import warnings
+warnings.filterwarnings("ignore", message="Failed to load")
 
 os.makedirs(CFG.PLOT_DIR, exist_ok=True)
 os.makedirs(CFG.CKPT_DIR, exist_ok=True)
