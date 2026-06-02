@@ -13,6 +13,8 @@ from sklearn.model_selection import train_test_split
 from configs.config import CFG
 from src.dataset import TextDetectionDataset, InferenceDataset
 from ablation import AblationConfig, run_single, seed_everything
+import warnings
+warnings.filterwarnings("ignore", message="Failed to load")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="🚀 CLI Điều khiển Huấn luyện Đơn lẻ AI Text Detector")
