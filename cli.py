@@ -40,6 +40,7 @@ def parse_args():
     
     # Ghi đè cấu hình cứng trong CFG (Tùy chọn nâng cao)
     parser.add_argument("--batch_size", type=int, default=None, help="Ghi đè BATCH_SIZE trong file config.py")
+    parser.add_argument("--accum_steps", type=int, default=None, help="Ghi đè ACCUM_STEPS trong file config.py")
     parser.add_argument("--epochs", type=int, default=None, help="Ghi đè EPOCHS trong file config.py")
     parser.add_argument("--is_threshold_only", action="store_true",
                         help="Chỉ load checkpoint cũ để tính lại ngưỡng phân loại và phân tích lỗi, không train lại")
@@ -53,6 +54,8 @@ def main():
     CFG.MODEL_NAME = args.model_name
     if args.batch_size is not None:
         CFG.BATCH_SIZE = args.batch_size
+    if args.accum_steps is not None:
+        CFG.ACCUM_STEPS = args.accum_steps
     if args.epochs is not None:
         CFG.EPOCHS = args.epochs
         
@@ -125,3 +128,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
