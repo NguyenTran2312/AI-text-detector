@@ -65,6 +65,12 @@ pip install -r requirements.txt
 ### Tải Dataset (Download Links)
 Vui lòng tải các file dữ liệu dưới đây và đặt vào thư mục lưu trữ của bạn (ví dụ: trên Google Drive hoặc thư mục local) trước khi tiến hành huấn luyện:
 
+* Tải File train gốc:
+
+```json
+!gdown 1HeCgnLuDoUHhP-2OsTSSC3FXRLVoI6OG
+```
+  
 
 * Tải File cleaned_text_data.jsonl: 
 
