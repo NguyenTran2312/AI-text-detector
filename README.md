@@ -423,7 +423,7 @@ Bảng tham chiếu theo VRAM:
 
 | GPU | VRAM | BATCH_SIZE | ACCUM_STEPS | Ghi chú |
 |---|---|---|---|---|
-| A100 | 40 GB | 128 | 2 | Mặc định trong config |
+| RTX 5090 | 40 GB | 128 | 2 | Mặc định trong config |
 | V100 / A10 | 16–24 GB | 64 | 4 | Colab Pro / Kaggle P100 |
 | T4 | 15 GB | 32 | 8 | Colab free |
 | RTX 3070 / 4060 | 8 GB | 16 | 16 | Local consumer GPU |
