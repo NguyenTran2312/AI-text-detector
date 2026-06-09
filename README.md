@@ -62,17 +62,18 @@ pip install -r requirements.txt
 
 ```
 
-Tải Dataset (Download Links)
+### Tải Dataset (Download Links)
 Vui lòng tải các file dữ liệu dưới đây và đặt vào thư mục lưu trữ của bạn (ví dụ: trên Google Drive hoặc thư mục local) trước khi tiến hành huấn luyện:
-Tải File train gốc (Original Train Data): 1HeCgnLuDoUHhP-2OsTSSC3FXRLVoI6OG
 
-Tải File cleaned_text_data.jsonl: 1OglczhXUZmABpx_ASuA84TLt5yonO0aV
+* Tải File train gốc (Original Train Data): 1HeCgnLuDoUHhP-2OsTSSC3FXRLVoI6OG
 
-Tải File subtaskA_dev_monolingual.jsonl (Dev Set): 11rOHC43k8y2tgH1wY2nc43aAxg8yS-vY
+* Tải File cleaned_text_data.jsonl: 1OglczhXUZmABpx_ASuA84TLt5yonO0aV
 
-Tải File subtaskA_monolingual_labeled.jsonl (Test Labeled): 1--wjFQtIp51OptVLMFsiOGrA7-62JvaV
+* Tải File subtaskA_dev_monolingual.jsonl (Dev Set): 11rOHC43k8y2tgH1wY2nc43aAxg8yS-vY
 
-Tải File subtaskA_monolingual_unlabeled.jsonl (Test Unlabeled): 1kaalGjfBLaUbtcnOdN6kCM2Cp-cEgbKH
+* Tải File subtaskA_monolingual_labeled.jsonl (Test Labeled): 1--wjFQtIp51OptVLMFsiOGrA7-62JvaV
+
+* Tải File subtaskA_monolingual_unlabeled.jsonl (Test Unlabeled): 1kaalGjfBLaUbtcnOdN6kCM2Cp-cEgbKH
 
 ### Cấu trúc file JSONL dữ liệu
 
