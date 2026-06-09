@@ -1,7 +1,3 @@
-Dưới đây là file `README.md` hoàn chỉnh đã được tổng hợp từ toàn bộ hướng dẫn, cập nhật phần CLI/Ablation và bổ sung danh sách tài liệu tham khảo. Mình cũng đã tinh chỉnh lại cấu trúc một chút để nội dung mạch lạc hơn, rất phù hợp để bạn đưa lên Kaggle hoặc GitHub cho dự án AI Text Detector của mình.
-
-Bạn chỉ cần nhấn nút **Copy** ở góc trên bên phải khối code dưới đây và dán thẳng vào file `README.md` nhé:
-
 ```markdown
 # AI Text Detector
 
