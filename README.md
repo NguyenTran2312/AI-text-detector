@@ -75,6 +75,13 @@ Vui lòng tải các file dữ liệu dưới đây và đặt vào thư mục l
 
 * Tải File subtaskA_monolingual_unlabeled.jsonl (Test Unlabeled): 1kaalGjfBLaUbtcnOdN6kCM2Cp-cEgbKH
 
+* Dùng gdown để tải các file
+
+```json
+gdown --folder https://drive.google.com/drive/folders/<file_id>
+```
+
+
 ### Cấu trúc file JSONL dữ liệu
 
 Mỗi dòng trong tập dữ liệu là một JSON object:
